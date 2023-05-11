@@ -305,15 +305,16 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
 
     weight_color = torch.sum(torch.exp(omega), dim=-1)
     color_map = torch.sum(torch.exp(omega) * color, dim=-1) / (weight_color + 1e-5)
-    # depth_map = torch.sum(weight_color * z_vals, -1)
-    # disp_map = 1. / torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights, -1))
-    # acc_map = torch.sum(weights, -1)
-    #
-    # if white_bkgd:
-    #     color_map = color_map + (1. - acc_map[..., None])
 
-    # return color_map, disp_map, acc_map, weights, depth_map
-    return color_map, color_map, color_map, color_map, color_map
+    depth_map = torch.sum(weights.mean(-1) * z_vals, -1)
+    disp_map = 1. / torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights.mean(-1), -1))
+    acc_map = torch.sum(weights.mean(-1), -1)
+
+    if white_bkgd:
+        color_map = color_map + (1. - acc_map[..., None])
+
+    return color_map, disp_map, acc_map, weights.mean(-1), depth_map
+    # return color_map, color_map, color_map, color_map, color_map
 
 
 def render_rays(ray_batch,
@@ -534,7 +535,7 @@ def config_parser():
                         help='frequency of tensorboard image logging')
     parser.add_argument("--i_weights", type=int, default=10000,
                         help='frequency of weight ckpt saving')
-    parser.add_argument("--i_testset", type=int, default=50000,
+    parser.add_argument("--i_testset", type=int, default=10000,
                         help='frequency of testset saving')
     parser.add_argument("--i_video", type=int, default=50000,
                         help='frequency of render_poses video saving')
