@@ -62,6 +62,44 @@ def get_embedder(multires, i=0):
     return embed, embedder_obj.out_dim
 
 
+class Decoder(nn.Module):
+    def __init__(self, d=24, h=24):
+        super().__init__()
+
+        self.d = d
+        self.h = h
+
+        self.decoder_layer = nn.ModuleList(
+            [nn.Linear(self.d, self.h), nn.Linear(self.h, 3)]
+        )
+
+    def forward(self, h):
+        for i, l in enumerate(self.decoder_layer):
+            h = l(h)
+            h = F.relu(h)
+
+        return h
+
+
+class Gate(nn.Module):
+    def __init__(self, d=24, h=24):
+        super().__init__()
+
+        self.d = d
+        self.h = h
+
+        self.gate_layer = nn.ModuleList(
+            [nn.Linear(self.d, self.h), nn.Linear(self.h, 1)]
+        )
+
+    def forward(self, h):
+        for i, l in enumerate(self.gate_layer):
+            h = l(h)
+            h = F.relu(h)
+
+        return h
+
+
 # Model
 class NeRF(nn.Module):
     def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4], use_viewdirs=False, K=6, d=24,
@@ -97,9 +135,8 @@ class NeRF(nn.Module):
         else:
             self.output_linear = nn.Linear(W, output_ch)
 
-        # self.decoder_layer = nn.ModuleList(
-        #     [nn.Linear()]
-        # )
+        self.decoder_layer = Decoder(d=d, h=h)
+        self.gate_layer = Gate(d=d, h=h)
 
     def forward(self, x):
         input_pts, input_views = torch.split(x, [self.input_ch, self.input_ch_views], dim=-1)
