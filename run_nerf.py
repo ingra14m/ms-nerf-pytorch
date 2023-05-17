@@ -306,14 +306,15 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
     weight_color = torch.sum(torch.exp(omega), dim=-1)
     color_map = torch.sum(torch.exp(omega) * color, dim=-1) / (weight_color + 1e-5)
 
-    depth_map = torch.sum(weights.mean(-1) * z_vals, -1)
-    disp_map = 1. / torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights.mean(-1), -1))
-    acc_map = torch.sum(weights.mean(-1), -1)
+    weight_real = weights.mean(-1)
+    depth_map = torch.sum(weight_real * z_vals, -1)
+    disp_map = 1. / torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weight_real, -1))
+    acc_map = torch.sum(weight_real, -1)
 
     if white_bkgd:
         color_map = color_map + (1. - acc_map[..., None])
 
-    return color_map, disp_map, acc_map, weights.mean(-1), depth_map
+    return color_map, disp_map, acc_map, weight_real, depth_map
     # return color_map, color_map, color_map, color_map, color_map
 
 
