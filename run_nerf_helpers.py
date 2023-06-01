@@ -131,12 +131,16 @@ class NeRF(nn.Module):
         if use_viewdirs:
             self.feature_linear = nn.Linear(W, W)
             self.alpha_linear = nn.Linear(W, 1 * self.K)
-            self.rgb_linear = nn.Linear(W // 2, self.d * self.K)
+            if self.K == 1:
+                self.rgb_linear = nn.Linear(W // 2, 3)
+            else:
+                self.rgb_linear = nn.Linear(W // 2, self.d * self.K)
         else:
             self.output_linear = nn.Linear(W, output_ch)
 
-        self.decoder_layer = Decoder(d=d, h=h)
-        self.gate_layer = Gate(d=d, h=h)
+        if self.K > 1:
+            self.decoder_layer = Decoder(d=d, h=h)
+            self.gate_layer = Gate(d=d, h=h)
 
     def forward(self, x):
         input_pts, input_views = torch.split(x, [self.input_ch, self.input_ch_views], dim=-1)

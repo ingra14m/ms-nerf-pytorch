@@ -187,7 +187,7 @@ def create_nerf(args):
     skips = [4]
     model = NeRF(D=args.netdepth, W=args.netwidth,
                  input_ch=input_ch, output_ch=output_ch, skips=skips,
-                 input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
+                 input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs, K=1).to(device)
     grad_vars = list(model.parameters())
 
     model_fine = None
@@ -279,7 +279,7 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
 
     dists = dists * torch.norm(rays_d[..., None, :], dim=-1)
 
-    feature = torch.sigmoid(raw[..., :K * d])  # [N_rays, N_samples, 3]
+    feature = torch.sigmoid(raw[..., :K * d]) if K == 1 else torch.sigmoid(raw[...,:3])   # [N_rays, N_samples, 3]
     batch, sample = feature.shape[:2]
     noise = 0.
     if raw_noise_std > 0.:
@@ -291,30 +291,41 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
             noise = np.random.rand(*list(raw[..., 3].shape)) * raw_noise_std
             noise = torch.Tensor(noise)
 
-    alpha = raw2alpha(raw[..., K * d:] + noise, dists[..., None])  # [N_rays, N_samples]
-    # weights = alpha * tf.math.cumprod(1.-alpha + 1e-10, -1, exclusive=True)
+    if K > 1:
+        alpha = raw2alpha(raw[..., K * d:] + noise, dists[..., None])  # [N_rays, N_samples]
+        # weights = alpha * tf.math.cumprod(1.-alpha + 1e-10, -1, exclusive=True)
 
-    weights = torch.cat([(alpha[..., i] * torch.cumprod(
-        torch.cat([torch.ones((alpha.shape[0], 1)), 1. - alpha[..., i] + 1e-10], -1), -1)[:, :-1])[..., None] for i in
-                         range(K)], dim=-1)
-    feature = feature.reshape(batch, sample, K, d)
-    feature_map = torch.sum(weights[..., None] * feature, 1).reshape(-1, d) # [N_rays, 3]
+        weights = torch.cat([(alpha[..., i] * torch.cumprod(
+            torch.cat([torch.ones((alpha.shape[0], 1)), 1. - alpha[..., i] + 1e-10], -1), -1)[:, :-1])[..., None] for i in
+                             range(K)], dim=-1)
+        feature = feature.reshape(batch, sample, K, d)
+        feature_map = torch.sum(weights[..., None] * feature, 1).reshape(-1, d) # [N_rays, 3]
 
-    color = network_fn.decoder_layer(feature_map).reshape(-1, 3, K)
-    omega = network_fn.gate_layer(feature_map).reshape(-1, 1, K)
+        color = network_fn.decoder_layer(feature_map).reshape(-1, 3, K)
+        omega = network_fn.gate_layer(feature_map).reshape(-1, 1, K)
 
-    weight_color = torch.sum(torch.exp(omega), dim=-1)
-    color_map = torch.sum(torch.exp(omega) * color, dim=-1) / (weight_color + 1e-5)
+        weight_color = torch.sum(torch.exp(omega), dim=-1)
+        color_map = torch.sum(torch.exp(omega) * color, dim=-1) / (weight_color + 1e-5)
 
-    weight_real = weights.mean(-1)
-    depth_map = torch.sum(weight_real * z_vals, -1)
-    disp_map = 1. / torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weight_real, -1))
-    acc_map = torch.sum(weight_real, -1)
+        weights = weights.mean(-1)
+        depth_map = torch.sum(weights * z_vals, -1)
+        disp_map = 1. / torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights, -1))
+        acc_map = torch.sum(weights, -1)
+    else:
+        alpha = raw2alpha(raw[..., 3] + noise, dists)  # [N_rays, N_samples]
+        # weights = alpha * tf.math.cumprod(1.-alpha + 1e-10, -1, exclusive=True)
+        weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)), 1. - alpha + 1e-10], -1), -1)[:,
+                          :-1]
+        color_map = torch.sum(weights[..., None] * feature, -2)  # [N_rays, 3]
+
+        depth_map = torch.sum(weights * z_vals, -1)
+        disp_map = 1. / torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights, -1))
+        acc_map = torch.sum(weights, -1)
 
     if white_bkgd:
         color_map = color_map + (1. - acc_map[..., None])
 
-    return color_map, disp_map, acc_map, weight_real, depth_map
+    return color_map, disp_map, acc_map, weights, depth_map
     # return color_map, color_map, color_map, color_map, color_map
 
 
@@ -396,7 +407,7 @@ def render_rays(ray_batch,
     #     raw = run_network(pts)
     raw = network_query_fn(pts, viewdirs, network_fn)
     rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd,
-                                                                 pytest=pytest, network_fn=network_fn)
+                                                                 pytest=pytest, network_fn=network_fn, K=1)
 
     if N_importance > 0:
         rgb_map_0, disp_map_0, acc_map_0 = rgb_map, disp_map, acc_map
